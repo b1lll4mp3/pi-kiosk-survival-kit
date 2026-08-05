@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kiosk composite page — fitGuard + heartbeat demo</title>
+<!--
+  Minimal composite dashboard page demonstrating the two in-page survival patterns
+  (layer 1 of the kit):
+
+  1. HEARTBEAT: prove the renderer's JS is ACTUALLY ALIVE, not just that Chromium answers
+     ping. The page POSTs to the server every 30 s; the server stores the time; the on-Pi
+     watchdog (layer 3) reads the beat's age and escalates when it goes stale. A wedged
+     renderer cannot run this JS to heal itself — that is exactly what makes the beat a
+     trustworthy proxy.
+
+  2. fitGuard: card priority under fixed-viewport pressure. A wall board has no scrollbar
+     and no human to scroll it — overflow means content silently vanishes off the bottom
+     edge. Every card is one of three kinds:
+       - PROTECTED      never dropped; when present it is the point of the board
+       - DROPPABLE      carries data-priority; lowest priority is hidden first
+       - SELF-MANAGING  unbounded list that trims its OWN children and shows "+N more"
+     Order of sacrifice: self-managing cards trim themselves first (losing one list row is
+     cheaper than losing a whole card), then droppable cards are hidden lowest-priority
+     first. Protected cards are never touched.
+-->
+<style>
+  :root{ --bg:#14110d; --card:#201b15; --ink:#efe6d6; --muted:#9a8d78; --line:#332b21; }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:Georgia,serif;
+       height:100vh;overflow:hidden;padding:14px;display:block}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;
+        padding:14px 18px;margin-bottom:12px}
+  .k{font-size:12px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);
+     font-family:system-ui,sans-serif;margin-bottom:6px}
+  .big{font-size:42px;font-weight:700}
+  .row{padding:6px 0;border-top:1px solid var(--line);font-size:16px}
+  .row:first-of-type{border-top:0}
+  .more{color:var(--muted);font-size:13px;font-family:system-ui,sans-serif;padding-top:6px}
+  #beatdot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#5a9;margin-left:8px}
+</style>
+</head>
+<body>
+
+  <!-- PROTECTED: the clock is the point of the board; never dropped. -->
+  <div class="card" data-fit="protected">
+    <div class="k">Clock<span id="beatdot" title="heartbeat"></span></div>
+    <div class="big" id="clock">--:--</div>
+  </div>
+
+  <!-- DROPPABLE, priority 2: useful, but the first thing to go under pressure is not this... -->
+  <div class="card" data-fit="droppable" data-priority="2">
+    <div class="k">Weather</div>
+    <div>Partly cloudy, 21°C — light breeze from the west.</div>
+  </div>
+
+  <!-- DROPPABLE, priority 1 (lowest): first whole card sacrificed. -->
+  <div class="card" data-fit="droppable" data-priority="1">
+    <div class="k">Quote of the day</div>
+    <div>"Simplicity is a great virtue but it requires hard work to achieve it."</div>
+  </div>
+
+  <!-- SELF-MANAGING: an unbounded list that trims its own rows before any card is dropped. -->
+  <div class="card" data-fit="selfmanaged" id="list">
+    <div class="k">Now playing</div>
+    <div class="row">Kitchen — Morning Jazz</div>
+    <div class="row">Living room — News radio</div>
+    <div class="row">Office — Lo-fi beats</div>
+    <div class="row">Bedroom — White noise</div>
+    <div class="row">Patio — Summer hits</div>
+  </div>
+
+<script>
+/* ---------------- heartbeat (layer 1 -> layer 3 handshake) ----------------
+   POST an empty body to the heartbeat endpoint every 30 s. Server side stores
+   "last seen"; GET returns {"ago_s": <seconds>} for the watchdogs. */
+var DASHBOARD_SERVER = '';   // same-origin by default; or 'http://192.0.2.10:1880'
+function beat(){
+  try{
+    var b = new XMLHttpRequest();
+    b.open('POST', DASHBOARD_SERVER + '/endpoint/dashboard-heartbeat');
+    b.timeout = 8000;
+    b.send();
+    document.getElementById('beatdot').style.background = '#5a9';
+  }catch(e){ document.getElementById('beatdot').style.background = '#a55'; }
+}
+beat(); setInterval(beat, 30000);
+
+/* ---------------- fitGuard ----------------
+   Runs after every content refresh (and on resize). Measures the true bottom of the
+   rendered content against the viewport, then sheds load in cost order:
+     1. self-managing cards trim their own last rows (leaving a "+N more" note)
+     2. droppable cards are hidden, lowest data-priority first
+   Protected cards are untouchable. Everything hidden is restored first on the next
+   pass, so recovery after the pressure passes is automatic. */
+function fitGuard(){
+  var lim = window.innerHeight - 4;
+
+  // restore everything, then re-shed: makes the guard idempotent per pass
+  document.querySelectorAll('[data-fit="droppable"]').forEach(function(c){ c.style.display=''; });
+  document.querySelectorAll('.more').forEach(function(n){ n.remove(); });
+  document.querySelectorAll('[data-fit="selfmanaged"] .row').forEach(function(r){ r.style.display=''; });
+
+  function bottom(){
+    var last = 0;
+    document.querySelectorAll('body > *').forEach(function(el){
+      if (el.tagName === 'SCRIPT' || el.offsetParent === null) return;
+      var b = el.getBoundingClientRect().bottom;
+      if (b > last) last = b;
+    });
+    return last;
+  }
+
+  // 1) self-managing cards trim their own rows (reserve a line for the "+N more" note)
+  document.querySelectorAll('[data-fit="selfmanaged"]').forEach(function(card){
+    var rows = card.querySelectorAll('.row'), cut = 0;
+    var room = lim - 30;
+    for (var i = rows.length - 1; i > 0 && bottom() > room; i--){
+      rows[i].style.display = 'none'; cut++;
+    }
+    if (cut){
+      var n = document.createElement('div');
+      n.className = 'more';
+      n.textContent = '+' + cut + ' more';
+      card.appendChild(n);
+    }
+  });
+
+  // 2) drop whole droppable cards, lowest priority first
+  var droppable = Array.prototype.slice.call(document.querySelectorAll('[data-fit="droppable"]'))
+    .sort(function(a, b){ return (+a.dataset.priority || 0) - (+b.dataset.priority || 0); });
+  for (var j = 0; j < droppable.length && bottom() > lim; j++){
+    droppable[j].style.display = 'none';
+  }
+}
+
+function tickClock(){
+  var d = new Date();
+  document.getElementById('clock').textContent =
+    ('0'+d.getHours()).slice(-2) + ':' + ('0'+d.getMinutes()).slice(-2);
+}
+tickClock(); setInterval(tickClock, 5000);
+
+fitGuard();
+window.addEventListener('resize', fitGuard);
+setInterval(fitGuard, 20000);   // after each content refresh in a real board
+</script>
+</body>
+</html>
