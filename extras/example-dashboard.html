@@ -27,16 +27,19 @@
 <style>
   :root{ --bg:#14110d; --card:#201b15; --ink:#efe6d6; --muted:#9a8d78; --line:#332b21; }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--ink);font-family:Georgia,serif;
+  /* Two-family pairing mirrors the boards this kit was extracted from: a display
+     serif carries the glanceable numbers, a quiet sans carries labels and rows. */
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font-family:system-ui,-apple-system,sans-serif;
        height:100vh;overflow:hidden;padding:14px;display:block}
   .card{background:var(--card);border:1px solid var(--line);border-radius:12px;
         padding:14px 18px;margin-bottom:12px}
   .k{font-size:12px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);
-     font-family:system-ui,sans-serif;margin-bottom:6px}
-  .big{font-size:42px;font-weight:700}
+     margin-bottom:6px}
+  .big{font-size:42px;font-weight:700;font-family:Georgia,'Times New Roman',serif}
   .row{padding:6px 0;border-top:1px solid var(--line);font-size:16px}
   .row:first-of-type{border-top:0}
-  .more{color:var(--muted);font-size:13px;font-family:system-ui,sans-serif;padding-top:6px}
+  .more{color:var(--muted);font-size:13px;padding-top:6px}
   #beatdot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#5a9;margin-left:8px}
 </style>
 </head>
