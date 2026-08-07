@@ -137,7 +137,12 @@ Blind to: nothing short of the power grid. That's the job of being layer 4.
   payload byte-count of every endpoint a fragile board loads, plus its memory, swap, and
   thermal state over SSH. Run it before and after a change. **Any delta is stop-the-line.**
   Why not status codes or timing? Per-board content gating fails silently, so a missed gate
-  returns 200 with the wrong bytes. And per the source, under-voltage causes ARM frequency
+  returns 200 with the wrong bytes. A related lesson from the same fleet, for anything you
+  cache server-side: validate cached bytes on the read path, not just at write time. I had
+  a frame cache that JSON-round-tripped a Buffer and served `{"type":"Buffer",...}` as a
+  4 MB image/jpeg while every status, content-type and freshness monitor stayed green. A
+  freshness alarm that has never once gone red is a claim, not a control. And per the
+  source, under-voltage causes ARM frequency
   scaling, so timing lies on a browning-out board. Bytes are clock-independent.
 - Nonce-based reboot/halt pull-control, in `firstrun-kiosk.sh`'s `screen_poll.sh`. Remote
   reboot with no inbound port on the board. It polls a monotonic nonce and acts on the
@@ -148,7 +153,10 @@ Blind to: nothing short of the power grid. That's the job of being layer 4.
   reads every connector as disconnected, and a connected-only match brings a portrait board
   up landscape), a loop that re-applies the mode when the panel returns (xrandr can't set a
   mode on a disconnected output), rotation self-heal, and full-range RGB re-assertion on
-  KMS boards.
+  KMS boards. The display watcher also carries a mode-escalation guard: it records the
+  first known-good mode and refresh rate, and if the panel ever comes back at something
+  else it shouts and restores, because a TV renegotiating to a wrong mode after a power
+  blip otherwise just looks like a subtly broken board forever.
 - `firstrun-kiosk.sh` is unattended first-boot provisioning that wires all of the above into
   a fresh Pi OS Lite card. It carries its own scar tissue. Wait for clock sync before apt,
   because a Pi has no RTC and a stale clock both fails repo signature checks and 404s the
