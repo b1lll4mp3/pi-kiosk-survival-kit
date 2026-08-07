@@ -4,22 +4,31 @@ Four independent watchdog layers that keep my Raspberry Pi wall dashboards alive
 me touching them. Each layer catches a failure class the layer below it is structurally
 blind to. Plus byte-exact deploy verification and pull-based remote reboot control.
 
-## The morning a Pi came back with no radio
+## The morning a Pi healed its own radio
 
-2026-08-05, early. A Pi 3B wall board rebooted and came back up with its WiFi radio dead.
-No SSH, no ping, nothing on the network. Historically that meant the board stayed dark
-until somebody noticed and pulled the plug, which in my house had meant 8-hour and even
-36-hour blind outages.
+2026-08-05. I rebooted a Pi 3B wall board on purpose, partway through a rename migration,
+and it came back up with its WiFi radio dead. No SSH, no ping, nothing on the network.
+Historically that meant the board stayed dark until somebody noticed and pulled the plug,
+which in my house had meant 8-hour and even 36-hour blind outages.
 
 This time the log told a different story. Layer 3, the on-Pi watchdog running from cron
 every 2 minutes, couldn't reach the heartbeat server, checked `wlan0`, found it missing,
 and started counting strikes. At strike 3 it restarted NetworkManager. Still dead: the
 radio needed its firmware reloaded, and no daemon restart can do that. At strike 6 it
-invoked its guarded self-reboot. The board came back with a working radio, the kiosk
-respawned, the page started beating, and every layer stood down.
+invoked its guarded self-reboot, which landed at 10:58. The board came back with a working
+radio, the kiosk respawned, and every layer stood down.
 
-Nobody touched anything. The whole event exists only as a syslog trail. That's what these
-scripts are for.
+Let me be precise about what was unattended here, because it's easy to oversell. The event
+wasn't: I triggered that reboot, I was sitting there watching, and I logged the whole thing
+as a live end-to-end validation of the rename. The recovery was: I never touched the board,
+nothing I did healed it, and it put itself back on the network.
+
+On that same day a different board in the same fleet sat dark for 7.5 hours. Its
+provisioning kit had installed a 1699-byte watchdog with no wifi self-heal in it at all: no
+`net_alive()`, no NetworkManager restart, no recovery reboot. So it logged
+"unreachable, skip" every two minutes for seven and a half hours while the branch that
+would have rescued it sat in the repo the whole time. That's the strongest argument I have
+for the drift checking further down.
 
 ## The four layers
 
@@ -43,13 +52,25 @@ flowchart TB
 The rule I designed against: every layer watches a signal the layer below can't fake, and
 covers a failure the layer below can't fix.
 
-### Layer 1: in-page self-heal (`extras/example-dashboard.html` shows the pattern)
+### Layer 1: in-page self-heal
 
 Catches a single iframe or endpoint dying while the page itself is healthy. A transient
 server blip at load time used to break all the frames at once, with no recovery until the
 next meta-refresh. The in-page watchdog reloads failed frames with exponential backoff
-(30 s → 5 min cap), and only allows a whole-page reload when every frame is broken, ≥5 min
-apart, max 3 times. On a memory-tight Pi a reload loop is worse than the outage.
+(30 s → 5 min cap), and only escalates to a whole-page reload when every frame is broken,
+rate-limited to once per 5 minutes. There's no cap on how many times it escalates.
+
+There used to be one: three whole-page reloads, then permanent give-up, on the theory that
+a reload loop is worse than the outage on a memory-tight Pi. A real outage reversed that
+reasoning. On 2026-07-24 an all-frames-down stretch outlasted the three reloads, the page
+gave up while everything was still broken, and the board then sat dead for up to an hour
+waiting on the meta-refresh. So the give-up is gone. Rate-limited retries continue for as
+long as it's all-down, and the Pi-side watchdog is the real backstop for a wedged
+renderer, since this JS can't run in that case anyway.
+
+`extras/example-dashboard.html` shows the heartbeat POST and the fitGuard, not the frame
+self-heal. There's no frame health check, no backoff and no whole-page escalation in the
+demo, so treat it as the heartbeat half only.
 
 It also POSTs the heartbeat every 30 s. That's the signal every higher layer trusts,
 because it can only exist if the page JS is actually running.
@@ -79,7 +100,9 @@ over multi-day uptime and a soft reload isn't always enough:
 
 - T1 stale → `xdotool` ctrl+r (browser-level reload works even when page JS is frozen)
 - T2 still stale → `pkill -9 chromium` (layer 2 respawns it fresh in ~2 s)
-- T3 still stale ~10 min after T2 → guarded `sudo reboot`, rate-limited by a cooldown
+- T3 still stale 10 min after the FIRST detection → guarded `sudo reboot`, rate-limited by
+  a cooldown. That 600 s clock gets stamped at T1 and carried through T2 unchanged, so it
+  measures time since first stale, not time since the kill
 
 Then there's the N-branch, the part that saved the 2026-08-05 morning. When the heartbeat
 endpoint is unreachable, "do nothing" is only the right answer if the network is actually
@@ -129,7 +152,11 @@ power-cycles that board's smart plug via Home Assistant: off, 8 s, on. The judge
   incident where a board left out of the table stayed dark 36 h while the page monitor
   stayed green.
 
-Blind to: nothing short of the power grid. That's the job of being layer 4.
+Blind to: a panel that refuses to sync. Since 2026-08-05 that's the one failure I know none
+of the four layers catch. The board renders, the page keeps beating, `xrandr` geometry
+reads correct, the HTTP monitor says 200, `scrot` captures a perfect frame, and the glass
+is black. That one cost me 7.5 hours dark. Nothing on the board and nothing on the network
+can see it, which is why my standing rule is that only human eyes close a glass case.
 
 ## The supporting cast
 
@@ -140,7 +167,8 @@ Blind to: nothing short of the power grid. That's the job of being layer 4.
   returns 200 with the wrong bytes. A related lesson from the same fleet, for anything you
   cache server-side: validate cached bytes on the read path, not just at write time. I had
   a frame cache that JSON-round-tripped a Buffer and served `{"type":"Buffer",...}` as a
-  4 MB image/jpeg while every status, content-type and freshness monitor stayed green. A
+  4.4 MB `image/jpeg`, out of a 1.2 MB frame, while every status, content-type and
+  freshness monitor stayed green. A
   freshness alarm that has never once gone red is a claim, not a control. And per the
   source, under-voltage causes ARM frequency
   scaling, so timing lies on a browning-out board. Bytes are clock-independent.
@@ -155,17 +183,27 @@ Blind to: nothing short of the power grid. That's the job of being layer 4.
   mode on a disconnected output), rotation self-heal, and full-range RGB re-assertion on
   KMS boards. The display watcher also carries a mode-escalation guard: it records the
   first known-good mode and refresh rate, and if the panel ever comes back at something
-  else it shouts and restores, because a TV renegotiating to a wrong mode after a power
-  blip otherwise just looks like a subtly broken board forever.
+  else it shouts and restores. What put it there wasn't a power blip. I set
+  `hdmi_enable_4kp60` to bring a 311 MHz pixel clock inside the envelope, which raised the
+  core clock from 500 to 550 MHz, which unlocked 120 Hz and 144 Hz modes that had been
+  unreachable before, and X auto-selects the highest preferred mode. The link couldn't
+  carry the one it picked. Geometry still read correct and only the refresh rate had
+  moved, so it looked healthy from everywhere except the glass. The generalisable version:
+  raising a ceiling changes what gets selected, so a capability change and a selection pin
+  are one change, never two.
 - `firstrun-kiosk.sh` is unattended first-boot provisioning that wires all of the above into
   a fresh Pi OS Lite card. It carries its own scar tissue. Wait for clock sync before apt,
   because a Pi has no RTC and a stale clock both fails repo signature checks and 404s the
   pool. `apt-get update` has to succeed or no done-flag gets written. Journald gets
   persistent-but-capped storage via an `/etc` drop-in, because Pi OS forces volatile with a
   vendor drop-in and volatile journald destroyed the evidence in two separate freeze
-  investigations. WiFi powersave goes off by resolving the real NM connection name. And the
-  whole stack gets verified before the done-flag lands, so a half-configured board retries
-  instead of bricking politely.
+  investigations. WiFi powersave goes off by resolving the real NM connection name. And a
+  verify gate runs before the done-flag lands, so a half-configured board retries instead
+  of bricking politely. Read that gate narrowly though: it checks 5 binaries and 5 scripts,
+  and `dashboard_watchdog.sh` is not one of them. A missing layer 3 only prints
+  `WARN: layer 3 not installed` and the board still gets its flag and reboots into a
+  perfectly good kiosk with no watchdog on it. So the gate covers the kiosk stack, not the
+  whole stack.
 
 ## Quickstart
 
@@ -196,7 +234,10 @@ diff before.txt after.txt           # ANY delta is stop-the-line
 - Independent layers, not one smart daemon. Every failure in here was found because a
   previous layer didn't cover it. A single supervisor is a single point of blindness. Four
   dumb layers with disjoint vantage points caught a dead radio, a wedged renderer, a
-  stranded error page, and a hard freeze, each within minutes.
+  stranded error page, and a hard freeze. The in-page and on-Pi layers act in minutes (a
+  stale beat is 120 s, a guarded reboot is 10 min from first detection). Layer 4 deliberately
+  does not: it waits 30 min before cutting power, because the layers below it should be
+  allowed to finish first.
 - The heartbeat is the only signal I trust. Process-alive, port-open, ping, and
   NetworkManager state have all lied to me at some point in this fleet's history. "The
   page's JS posted within 120 s" is the one proxy that implies everything upstream works.
@@ -204,6 +245,22 @@ diff before.txt after.txt           # ANY delta is stop-the-line
   heartbeat record gets a TCP :22 tiebreaker. T3 and N2 reboots sit behind cooldowns, and
   plug cycles are windowed. Every escalation is cheap to be wrong about once, and guarded
   against being wrong repeatedly.
+- No per-board defaults in a script that's meant to be identical everywhere.
+  `dashboard_watchdog.sh` derives its `BEAT_URL` from the hostname and refuses to run on a
+  host it doesn't recognise. It used to default to one specific board's endpoint, so when I
+  synced it onto a second board that board's watchdog quietly watched the first board's
+  heartbeat. That's worse than having no watchdog at all: it sees a healthy beat, never
+  acts, and looks completely fine in the log. Hostname-derived config is also what makes a
+  fleet-wide checksum possible, because the canon copy now has no per-board edits in it.
+- Your copy of this kit will drift, so plan for it. Mine did. The rule "diff the kit's
+  embedded scripts against the repo before any reflash" existed for a day before it bit me,
+  because I'd applied it to one kit and not the other, and the second kit went on shipping a
+  watchdog with no wifi self-heal. So `firstrun-kiosk.sh` no longer embeds a verbatim
+  watchdog. It copies the one sitting in `/boot/firmware` at flash time, which means the
+  provisioner and the watchdog can't drift apart by construction. On my side there's also a
+  checksum script that compares every board's canon scripts and every kit's embedded copies
+  against the repo, exit 1 on drift, run weekly. An embedded copy inside a provisioning kit
+  is how a board gets reflashed back to a version missing a fix you already shipped.
 - `flock` on every cron entrant. A hung curl plus a */2 cron otherwise stacks instances.
 - Log context on every action. The watchdog stamps SoC temperature and throttle flags on
   each event, because a hot, throttled SoC stretches JS execution and looks a lot like a
@@ -211,6 +268,11 @@ diff before.txt after.txt           # ANY delta is stop-the-line
 
 ## Limitations
 
+- Nothing in here can see a panel that refuses to sync. The board renders, the heartbeat
+  arrives, `xrandr` geometry and `scrot` both look perfect, the HTTP check is 200, and the
+  glass is black. That failed silently on me for 7.5 hours. Only a human eye or a camera
+  closes that case, and the mode-escalation guard catches the trigger at best, never the
+  dark panel itself.
 - The heartbeat server is a trusted dependency. Layers 3 and 4 both abstain when it's down,
   which is correct (rebooting Pis can't fix a server) but does mean a simultaneous
   server-plus-board failure needs a human.
