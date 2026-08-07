@@ -34,9 +34,34 @@ set -u
 exec 200>/var/lock/dashboard_watchdog.lock
 /usr/bin/flock -n 200 || exit 0
 
+# BEAT_URL is DERIVED FROM THE HOSTNAME, never defaulted.
+#
+# WHY (2026-08-05): this file is shared canon copied onto every board. It used to default to the
+# FAMILY endpoint, so syncing canon onto any other board silently pointed that board's watchdog at
+# a DIFFERENT board's heartbeat. That is worse than having no watchdog at all: it sees a healthy
+# beat from the other board and never acts, so a wedged board looks fine forever. Done to basement
+# for real during a kit re-sync, and caught only because an audit happened to be running.
+#
+# Deriving it removes the class rather than adding a step someone has to remember. An unknown
+# hostname REFUSES TO RUN rather than guessing -- a watchdog that guesses wrong is a liability.
+# An explicit BEAT_URL in the environment still wins, for testing.
 DASHBOARD_SERVER="${DASHBOARD_SERVER:-http://192.0.2.10:1880}"   # base URL of the server that stores heartbeats
 DNS_PROBE_HOST="${DNS_PROBE_HOST:-192.0.2.53}"                   # any TCP:53 responder on another subnet (e.g. your DNS server)
-BEAT_URL="${BEAT_URL:-$DASHBOARD_SERVER/endpoint/dashboard-heartbeat}"
+# Derive each board's heartbeat endpoint from its hostname instead of defaulting it. A shared
+# copy of this script that defaults to ONE board's endpoint will silently watch the WRONG board's
+# heartbeat everywhere else -- worse than no watchdog, because it sees a healthy beat from the
+# other board and never acts. Map your own hostnames here.
+if [ -z "${BEAT_URL:-}" ]; then
+  case "$(hostname)" in
+    board-one)   _BEAT_EP=dashboard-heartbeat ;;
+    board-two)   _BEAT_EP=dashboard-heartbeat-two ;;
+    board-three) _BEAT_EP=dashboard-heartbeat-three ;;
+    *)
+      /usr/bin/logger -t dashboard_watchdog "FATAL: unknown hostname '$(hostname)' -- refusing to run rather than watch another board's heartbeat"
+      exit 1 ;;
+  esac
+  BEAT_URL="$DASHBOARD_SERVER/endpoint/$_BEAT_EP"
+fi
 STALE=120                    # seconds; page beats every 30s, so >120 = ~4 missed
 REBOOT_AFTER=600             # seconds stale (since first detection) before T3 reboot is allowed
 REBOOT_COOLDOWN=1800         # min seconds between watchdog reboots (shared by T3 and N2)

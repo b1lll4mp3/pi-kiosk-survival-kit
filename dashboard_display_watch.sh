@@ -24,6 +24,41 @@ set_range(){ xrandr --output "$1" --set "Broadcast RGB" "Full" 2>/dev/null || tr
 
 connected(){ [ -n "$1" ] && xrandr 2>/dev/null | grep -qE "^${1} connected"; }
 
+# --- mode-escalation guard (2026-08-06) ---------------------------------------------------------
+# WHAT THIS CANNOT DO: detect that the panel is dark. A monitor refusing to sync reports nothing
+# back -- the framebuffer keeps rendering, the page keeps beating, and every remote check says
+# healthy. That is why the standing rule is that only human eyes close a glass case.
+#
+# WHAT IT CAN DO: catch the TRIGGER. Basement went dark for 7.5 h on 2026-08-05 because raising the
+# core clock (hdmi_enable_4kp60, needed to bring the 311 MHz 75 Hz mode in-envelope) also unlocked
+# 120/144 Hz modes, and X auto-selects the highest preferred one -- landing on 1440p144, which that
+# link cannot carry. Geometry still read 1440x2560 and looked perfectly healthy; the REFRESH RATE
+# was the only thing that changed. So record the first known-good mode+rate and shout if it moves.
+MODE_FILE=/home/pi/.dashboard_mode
+
+current_mode(){   # -> "2560x1440 75.00"
+  xrandr 2>/dev/null | awk -v o="$1" '
+    $1==o { inb=1; next }
+    inb && /^[A-Za-z]/ { inb=0 }
+    inb { for(i=2;i<=NF;i++) if ($i ~ /\*/) { r=$i; gsub(/[*+]/,"",r); print $1, r; exit } }'
+}
+
+check_mode(){
+  cm=$(current_mode "$1")
+  [ -z "$cm" ] && return 0
+  if [ ! -f "$MODE_FILE" ]; then
+    printf '%s\n' "$cm" > "$MODE_FILE"
+    logger -t dashboard_display "baseline mode recorded: $cm"
+    return 0
+  fi
+  want=$(cat "$MODE_FILE" 2>/dev/null)
+  [ "$cm" = "$want" ] && return 0
+  logger -t dashboard_display "MODE CHANGED on $1: expected '$want', active '$cm' -- a mode this link cannot carry is invisible from here (framebuffer still renders, heartbeat still beats). Restoring."
+  xrandr --output "$1" --mode "${want% *}" --rate "${want#* }" --rotate right 2>/dev/null \
+    && logger -t dashboard_display "restored $want" \
+    || logger -t dashboard_display "RESTORE FAILED for $want -- check the glass with your eyes"
+}
+
 # Assert the range once at start, then only after a reconfigure -- re-asserting every pass would
 # write a KMS property (and risk a visible flicker) three times a minute for no reason.
 O=$(dashboard_output)
@@ -42,6 +77,8 @@ while true; do
       logger -t dashboard_display "$O is landscape ($G) -> re-applying --rotate right + full RGB"
       xrandr --output "$O" --rotate right 2>/dev/null
       set_range "$O"
+    else
+      check_mode "$O"
     fi
   fi
   sleep 20

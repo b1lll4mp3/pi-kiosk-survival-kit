@@ -23,9 +23,9 @@ echo "=== canary baseline: bedroom ($BOARD_IP) $(date -u +%Y-%m-%dT%H:%M:%SZ) ==
 echo
 echo "--- payload bytes (the primary signal) ---"
 for e in \
-  "dashboard-bedroom" \
-  "dashboard-photo?board=bedroom" \
-  "dashboard-extras?board=bedroom" \
+  "dashboard-<board>" \
+  "dashboard-photo?board=<board>" \
+  "dashboard-extras?board=<board>" \
   "dashboard-agenda" \
   "dashboard-header" \
   "dashboard-cams" \
