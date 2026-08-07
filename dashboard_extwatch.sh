@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# Dashboard EXTERNAL watchdog (layer 4) — runs on a server, NOT on the boards. Cron: */5.
+# Dashboard EXTERNAL watchdog (layer 4). Runs on a server, NOT on the boards. Cron: */5.
 #
 # Covers the failure class the on-Pi dashboard_watchdog.sh can NEVER fix: the board is
 # alive-but-unrecoverable (wedged past its own cron, WiFi stack dead in a way NetworkManager
 # restarts + reboots don't fix) or hard-frozen. Original incident (2026-08-02): a board sat dark
-# 8 hours with power on — every Pi-side layer blind or dead, and the previous external layer (a
+# 8 hours with power on: every Pi-side layer blind or dead, and the previous external layer (a
 # home-automation ping-recovery rule) had been disabled weeks earlier for false cross-VLAN-ping
 # triggers. This replaces it with a trustworthy signal: the board's OWN render heartbeat
-# (client-truth — it only beats if the page JS is actually running), NOT ping. On segmented
+# (client-truth: it only beats if the page JS is actually running), NOT ping. On segmented
 # networks ICMP is commonly filtered between VLANs; ping was the old false-trigger bug.
 #
 # Escalation per board (only boards with a smart-plug entity can be cycled):
-#   heartbeat ago_s > DEAD_AFTER (default 30 min — the Pi-side watchdog gets its full
+#   heartbeat ago_s > DEAD_AFTER (default 30 min, so the Pi-side watchdog gets its full
 #     T1..T3 / N1..N2 run first) -> Home Assistant power-cycles the board's plug (off, 8 s, on)
 #   ago_s null/absent (heartbeat server restarted while the board was dark) -> fall back to a
 #     TCP :22 probe of the board (cross-VLAN TCP is usually allowed; never ICMP cross-VLAN)
@@ -21,11 +21,11 @@
 #     a board won't fix the server).
 #
 # Optional: pushes to an Uptime-Kuma-style push monitor every healthy run (PUSH_URL) so the
-# watchdog itself is monitored — a silently dead cron shows up as an alert within minutes.
+# watchdog itself is monitored. A silently dead cron shows up as an alert within minutes.
 #
 # Hard-won table lesson (2026-08-01): a board left commented out of the table after its install
 # went dark and STAYED dark 36 h with no alert, while the page monitor (which probes the server,
-# not the Pi) stayed green the whole time. If a board renders a dashboard, it belongs in BOARDS —
+# not the Pi) stayed green the whole time. If a board renders a dashboard, it belongs in BOARDS,
 # alert-only if it has no plug.
 #
 # Deploy: this file + a config file on any always-on Linux box; cron: */5 * * * *.
@@ -41,7 +41,7 @@ HA="${HA_URL:-http://192.0.2.30:8123}"                         # Home Assistant 
 DEAD_AFTER=1800          # s stale before a board is declared beyond self-help
 MAX_CYCLES=2             # power-cycles per window before alert-only
 WINDOW=21600             # 6 h rate-limit window
-CYCLE_GAP=900            # min s between cycles — a cycled board needs a few ticks to boot + beat
+CYCLE_GAP=900            # min s between cycles; a cycled board needs a few ticks to boot + beat
 OFF_SECS=8
 LOCK=/tmp/dashboard_extwatch.lock
 
@@ -69,7 +69,7 @@ ha_call(){ # service_path json
 notify(){ ha_call notify/notify "{\"title\":\"Dashboard watchdog\",\"message\":$(printf '%s' "$1" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')}"; }
 tcp22(){ timeout 4 bash -c "echo > /dev/tcp/$1/22" 2>/dev/null; }
 
-# Heartbeat server alive at all? If not, abstain — no board can be judged.
+# Heartbeat server alive at all? If not, abstain: no board can be judged.
 curl -s -m 8 "$NR/dashboard-heartbeat" >/dev/null || { log "heartbeat server unreachable, abstain"; exit 0; }
 
 now=$(date +%s)
@@ -82,7 +82,7 @@ echo "$BOARDS" | while IFS='|' read -r NAME EP PLUG IP; do
   if [ -n "$AGO" ]; then
     [ "$AGO" -gt "$DEAD_AFTER" ] && DEAD=1
   else
-    # no beat on record (server restarted while board dark) — TCP :22 is the tiebreaker
+    # no beat on record (server restarted while board dark), so TCP :22 is the tiebreaker
     tcp22 "$IP" || DEAD=1
   fi
 
@@ -102,7 +102,7 @@ echo "$BOARDS" | while IFS='|' read -r NAME EP PLUG IP; do
   if [ -z "$PLUG" ]; then
     if [ "$ALERTED" -eq 0 ]; then
       log "$NAME dead (ago=${AGO:-none}, no plug) -> alert only"
-      notify "$NAME board dark (heartbeat ${AGO:-gone}s, no smart plug to cycle) — needs hands."
+      notify "$NAME board dark (heartbeat ${AGO:-gone}s, no smart plug to cycle). Needs hands."
       echo "$C $WS 1 $LC" > "$SF"
     fi
     continue
@@ -111,7 +111,7 @@ echo "$BOARDS" | while IFS='|' read -r NAME EP PLUG IP; do
   if [ "$C" -ge "$MAX_CYCLES" ]; then
     if [ "$ALERTED" -eq 0 ]; then
       log "$NAME still dead after $C cycles -> giving up until window reset, alerting"
-      notify "$NAME board STILL dark after $C power-cycles — not booting on its own (SD card / PSU / WiFi?). Manual check needed."
+      notify "$NAME board STILL dark after $C power-cycles, not booting on its own (SD card / PSU / WiFi?). Manual check needed."
       echo "$C $WS 1 $LC" > "$SF"
     fi
     continue
@@ -127,7 +127,7 @@ echo "$BOARDS" | while IFS='|' read -r NAME EP PLUG IP; do
   ha_call switch/turn_off "{\"entity_id\":\"$PLUG\"}"
   sleep "$OFF_SECS"
   ha_call switch/turn_on "{\"entity_id\":\"$PLUG\"}"
-  notify "$NAME board was dark ${AGO:-?}s past self-heal — power-cycled its plug (attempt $C/$MAX_CYCLES)."
+  notify "$NAME board was dark ${AGO:-?}s past self-heal; power-cycled its plug (attempt $C/$MAX_CYCLES)."
   echo "$C $WS 0 $now" > "$SF"
 done
 

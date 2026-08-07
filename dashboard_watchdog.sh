@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Dashboard render watchdog (family-room board, Pi 3B). Cron: */2 * * * *.
 #
-# Recovers a WEDGED renderer (Chromium alive, page JS frozen) — kiosk.sh's crash-respawn can't catch
+# Recovers a WEDGED renderer (Chromium alive, page JS frozen). kiosk.sh's crash-respawn can't catch
 # it and the in-page self-heal can't fix it (needs the frozen JS to run). Detection = the display
 # heartbeat age from Node-RED. 3-tier escalation because a 1 GB board eventually leaks over multi-day
 # uptime and a soft reload isn't always enough:
@@ -11,17 +11,17 @@
 #
 # ALSO handles the 2026-08-01 failure mode: the Pi's OWN WiFi dies in place (power stays on, board
 # drops off the network, heartbeat endpoint unreachable). The old rule was "unreachable => never
-# act" — correct for a backend outage, blind to a dead wlan0. Unreachable now splits on wlan0 state:
+# act", correct for a backend outage, blind to a dead wlan0. Unreachable now splits on wlan0 state:
 #   wlan0 connected      -> second-opinion probe (see below); only abstain if the network is
-#                           genuinely alive (backend down — reload/reboot can't fix Node-RED)
+#                           genuinely alive (backend down, so reload/reboot can't fix Node-RED)
 #   wlan0 NOT connected  -> N1 3 strikes (~6 min)  -> sudo systemctl restart NetworkManager
 #                           N2 6 strikes (~12 min) -> guarded `sudo reboot`, same cooldown as T3
 #                           (reboot reloads brcmfmac firmware, which an NM restart can't)
 #
 # 2026-08-02 LESSON: NM can report wlan0 "connected" while the client is gone from the AP (assoc
-# stale, no traffic passes) — the board sat dark 8 h because this branch abstained on NM's word
+# stale, no traffic passes). The board sat dark 8 h because this branch abstained on NM's word
 # alone. "connected" is now only trusted if a second-opinion probe passes: gateway ping (same-VLAN
-# ICMP is allowed) OR TCP to Pi-hole DNS (cross-VLAN TCP is allowed; cross-VLAN ICMP is NOT — never
+# ICMP is allowed) OR TCP to Pi-hole DNS (cross-VLAN TCP is allowed; cross-VLAN ICMP is NOT, so never
 # use ping for the cross-VLAN leg). Both probes failing while NM says connected => net-dead, take
 # the N-branch.
 #
@@ -47,7 +47,7 @@ NET_STATE=/tmp/dashboard_wd_net.state  # "strikes lastreboot"
 export DISPLAY=:0
 log(){ /usr/bin/logger -t dashboard_watchdog "$*"; }
 # Temp+throttle context on every acted-on event: a hot/throttled SoC stretches JS execution and can
-# masquerade as a wedge — this pins or rules that out from the log alone.
+# masquerade as a wedge, so this pins or rules that out from the log alone.
 soc(){ printf '%s %s' "$(/usr/bin/vcgencmd measure_temp 2>/dev/null)" "$(/usr/bin/vcgencmd get_throttled 2>/dev/null)"; }
 
 # WD_TEST_WIFI_STATE lets a test force this branch without killing real WiFi.

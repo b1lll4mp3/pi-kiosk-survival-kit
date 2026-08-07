@@ -10,7 +10,7 @@
 # Progress logs to /boot/firmware/kiosk-firstboot.log.
 #
 # WHY SO MUCH VERIFICATION: cloud-init runcmd fires ONCE. A half-configured board that gets
-# the done-flag never retries — so every step that can fail loud does, and the done-flag is
+# the done-flag never retries, so every step that can fail loud does, and the done-flag is
 # only written after the full stack verifies.
 set -u
 
@@ -43,7 +43,7 @@ echo "--- wait for CLOCK SYNC before apt (2026-08-04 first-boot failure) ---"
 # versions, and the pool fetches 404'd:
 #   OpenPGP signature verification failed: ... Not live until <future date>
 #   E: Failed to fetch .../libgraphite2-3_..._arm64.deb  404  Not Found
-# Result: no chromium, no X, no kiosk. Waiting for network reachability is NOT enough — wait
+# Result: no chromium, no X, no kiosk. Waiting for network reachability is NOT enough. Wait
 # for time sync specifically, and refuse to proceed on a clock that is obviously wrong.
 for i in $(seq 1 30); do
   [ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" = "yes" ] && { echo "clock synced ($i): $(date)"; break; }
@@ -51,7 +51,7 @@ for i in $(seq 1 30); do
 done
 YEAR=$(date +%Y)
 if [ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" != "yes" ] && [ "$YEAR" -lt 2026 ]; then
-  echo "VERIFY FAIL: clock not synced and year=$YEAR — apt signature checks will fail; no done-flag"
+  echo "VERIFY FAIL: clock not synced and year=$YEAR; apt signature checks will fail, no done-flag"
   exit 1
 fi
 
@@ -64,9 +64,9 @@ export DEBIAN_FRONTEND=noninteractive
 UPD_OK=0
 for i in 1 2 3; do
   if apt-get $APT_OPTS update; then UPD_OK=1; break; fi
-  echo "apt-get update failed (attempt $i) — retrying in 20s"; sleep 20
+  echo "apt-get update failed (attempt $i), retrying in 20s"; sleep 20
 done
-[ "$UPD_OK" = "1" ] || { echo "VERIFY FAIL: apt-get update failed 3x — check clock/signatures; no done-flag"; exit 1; }
+[ "$UPD_OK" = "1" ] || { echo "VERIFY FAIL: apt-get update failed 3x; check clock/signatures, no done-flag"; exit 1; }
 apt-get $APT_OPTS install --no-install-recommends xserver-xorg x11-xserver-utils xinit openbox \
   unclutter scrot xdotool
 apt-get $APT_OPTS install --no-install-recommends chromium-browser || apt-get $APT_OPTS install --no-install-recommends chromium
@@ -97,14 +97,14 @@ echo "--- $H/dashboard_output.sh (shared display-output detection with fallback)
 # 2026-08-04 audit lesson: an autostart that resolved its output with a bare connected-only
 #   OUT=$(xrandr | awk '/ connected/{print $1; exit}')
 # had NO fallback. When X starts while the panel is asleep/powered off, every connector reads
-# 'disconnected', OUT comes back EMPTY, and the rotate silently no-ops — a portrait wall board
+# 'disconnected', OUT comes back EMPTY, and the rotate silently no-ops, so a portrait wall board
 # comes back LANDSCAPE. Fall back to the first HDMI connector so rotation is always applied.
 cat > $H/dashboard_output.sh <<'OUTS'
 #!/bin/sh
 # Echo the display output to drive. Prefers a truly-connected one; falls back to the first HDMI
 # connector so a sleeping panel can never leave callers with an empty output name.
 # POSIX sh ON PURPOSE, and sourced with '.' by openbox's autostart and the display watch.
-# Openbox runs autostart under /bin/sh (dash) — a bash-ism here (BASH_SOURCE, arrays) is a hard
+# Openbox runs autostart under /bin/sh (dash), so a bash-ism here (BASH_SOURCE, arrays) is a hard
 # parse error that kills the whole autostart, i.e. no rotate, no kiosk, black board.
 dashboard_output(){
   o=$(xrandr 2>/dev/null | awk '$2=="connected"{print $1; exit}')
@@ -119,7 +119,7 @@ chmod +x $H/dashboard_output.sh
 echo "--- $H/dashboard_display_watch.sh (mode re-apply on panel return + RGB range) ---"
 # The fallback above stops the output NAME coming back empty, but xrandr cannot set a MODE on a
 # genuinely disconnected output. Proven 2026-08-04: X started with the panel powered off, the
-# framebuffer sat at 320x200, and nothing re-applied the mode when the monitor came back — dark
+# framebuffer sat at 320x200, and nothing re-applied the mode when the monitor came back. Dark
 # board until a reboot. This loop is the other half of the fix. It also re-asserts full-range
 # RGB (Pi 4/Pi 5 KMS ignores hdmi_pixel_encoding; limited-range on a PC monitor = crushed
 # blacks + washed whites) and self-heals a landscape board (xrandr --auto resets rotation).
@@ -165,7 +165,7 @@ CMD=/boot/firmware/cmdline.txt
 CONN="${DISPLAY_CONNECTOR:-HDMI-A-1}"
 MODE="${1:-1920x1080@60D}"
 cp -a "$CMD" "$CMD.bak.$(date +%s)"
-# cmdline.txt must stay ONE line — strip any existing video= for this connector first.
+# cmdline.txt must stay ONE line, so strip any existing video= for this connector first.
 NEW=$(tr -d '\n' < "$CMD" | sed -E "s/[[:space:]]*video=${CONN}:[^[:space:]]*//g")
 if [ "$MODE" = off ]; then
   printf '%s\n' "$NEW" > "$CMD"
@@ -182,7 +182,7 @@ echo "--- $H/screen_poll.sh (remote screen on/off + NONCE-based reboot/halt pull
 # Remote control WITHOUT opening any inbound port on the board: the board POLLS the server.
 # Screen on/off is a plain 0/1 state. Reboot/halt use a MONOTONIC NONCE: the server increments a
 # counter when the button is pressed; the board acts on CHANGE, and SEEDS on first read (so a
-# freshly booted board never re-executes the reboot that preceded its boot — acting on the
+# freshly booted board never re-executes the reboot that preceded its boot; acting on the
 # nonce's VALUE instead of its change is a reboot loop).
 cat > $H/screen_poll.sh <<POLL
 #!/bin/bash
@@ -228,7 +228,7 @@ xset s noblank
 #  2026-07-31: a monitor on the far micro-HDMI port shows as HDMI-2, so an HDMI-1-only rotate
 #    silently no-ops.
 #  2026-08-04: when X starts while the panel is asleep, EVERY connector reads 'disconnected'
-#    and a connected-only match yields an empty output — dashboard_output.sh falls back to the
+#    and a connected-only match yields an empty output. dashboard_output.sh falls back to the
 #    first HDMI connector; dashboard_display_watch.sh re-applies the mode when the panel returns.
 . /home/pi/dashboard_output.sh
 OUT=\$(dashboard_output)
@@ -243,13 +243,13 @@ echo 'exec openbox-session' > $H/.xinitrc
 echo "--- dashboard_watchdog.sh (layer 3) from the boot partition ---"
 # The kit's watchdog is copied to /boot/firmware/ at flash time so this provisioner and the
 # watchdog can never drift apart (the previous design embedded a verbatim copy with a
-# "RE-SYNC THIS BLOCK" comment — a reflash from a stale kit reverted post-deploy fixes).
+# "RE-SYNC THIS BLOCK" comment, and a reflash from a stale kit reverted post-deploy fixes).
 if [ -f /boot/firmware/dashboard_watchdog.sh ]; then
   sed "s|^DASHBOARD_SERVER=.*|DASHBOARD_SERVER=\"\${DASHBOARD_SERVER:-$DASHBOARD_SERVER}\"|" \
     /boot/firmware/dashboard_watchdog.sh > $H/dashboard_watchdog.sh
   chmod +x $H/dashboard_watchdog.sh
 else
-  echo "WARN: /boot/firmware/dashboard_watchdog.sh missing — layer 3 not installed"
+  echo "WARN: /boot/firmware/dashboard_watchdog.sh missing; layer 3 not installed"
 fi
 chown -R $U:$U $H/kiosk.sh $H/screen_poll.sh $H/dashboard_output.sh \
   $H/dashboard_display_watch.sh $H/force_display_mode.sh $H/.config $H/.xinitrc
@@ -266,14 +266,14 @@ Section "ServerFlags"
 EndSection
 XB
 
-echo "--- Xorg: force vc4 as the PRIMARY GPU (Pi 5 — REQUIRED, 2026-08-04) ---"
+echo "--- Xorg: force vc4 as the PRIMARY GPU (Pi 5: REQUIRED, 2026-08-04) ---"
 cat > /etc/X11/xorg.conf.d/20-vc4-primary.conf <<'VC4'
 # Pi 5: without this X does not start AT ALL. Its autodetection reports
 #   (II) no primary bus or device found
 # and picks card0 = v3d, which is RENDER-ONLY and owns no display outputs. card1 (vc4, owns
 # HDMI-A-1) is demoted to a secondary GPU, fbdev takes the primary, and X dies with:
 #   (EE) Cannot run in framebuffer mode. Please specify busIDs for all framebuffer devices
-# The same card0=v3d / card1=vc4-drm layout exists on Pi 4, where X autodetects correctly —
+# The same card0=v3d / card1=vc4-drm layout exists on Pi 4, where X autodetects correctly,
 # so this is Pi 5 behaviour. Harmless on Pi 3B/Pi 4.
 Section "OutputClass"
     Identifier "vc4 primary"
@@ -285,9 +285,9 @@ VC4
 
 echo "--- config.txt display (full KMS, EDID-native mode, NO legacy hdmi_* forcing) ---"
 CFG=/boot/firmware/config.txt
-# Pi 4/Pi 5 KMS deltas — deliberately NOT set here: dtoverlay=vc4-fkms-v3d (no such overlay on
+# Pi 4/Pi 5 KMS deltas deliberately NOT set here: dtoverlay=vc4-fkms-v3d (no such overlay on
 # Pi 5), hdmi_group/hdmi_mode/hdmi_pixel_encoding/hdmi_force_hotplug (legacy firmware options,
-# ignored under KMS — verified inert on a Pi 4), gpu_mem (legacy split). If the panel will not
+# ignored under KMS, verified inert on a Pi 4), gpu_mem (legacy split). If the panel will not
 # sync, the fix is /home/pi/force_display_mode.sh (kernel cmdline), not this file.
 grep -q "^dtoverlay=vc4-kms-v3d" $CFG || echo "dtoverlay=vc4-kms-v3d" >> $CFG
 grep -q "^disable_overscan=1" $CFG || echo "disable_overscan=1" >> $CFG
@@ -295,16 +295,16 @@ grep -q "^disable_overscan=1" $CFG || echo "disable_overscan=1" >> $CFG
 echo "--- resilience: journald capped-persistent, tmpfs chromium profile, wifi powersave off ---"
 # Journald: capped-persistent, NOT volatile. LESSON 2026-08-02: volatile journald destroyed the
 # pre-incident evidence in BOTH freeze root-cause hunts. Raspberry Pi OS ships
-# /usr/lib/systemd/journald.conf.d/40-rpi-volatile-storage.conf forcing volatile — drop-ins
+# /usr/lib/systemd/journald.conf.d/40-rpi-volatile-storage.conf forcing volatile, and drop-ins
 # override journald.conf, so editing the main file silently no-ops. Use an /etc drop-in.
 mkdir -p /etc/systemd/journald.conf.d /var/log/journal
 printf '[Journal]\nStorage=persistent\nSystemMaxUse=512M\nMaxRetentionSec=30day\n' > /etc/systemd/journald.conf.d/99-persistent.conf
-# tmpfs chromium profile: an SD-wear and crash-cleanliness measure — SD corruption is what has
+# tmpfs chromium profile: an SD-wear and crash-cleanliness measure. SD corruption is what has
 # actually killed boards in this fleet. Size to taste for your RAM.
 grep -q '/home/pi/.config/chromium' /etc/fstab || echo 'tmpfs /home/pi/.config/chromium tmpfs defaults,noatime,size=256M 0 0' >> /etc/fstab
-# Powersave off — LESSON 2026-07-31: the NM connection is NOT named after your SSID
+# Powersave off. LESSON 2026-07-31: the NM connection is NOT named after your SSID
 # (Imager/cloud-init names it e.g. "netplan-wlan0-<SSID>"), so targeting the SSID by name
-# silently no-ops and powersave stays on — which dropped a board off wifi within hours.
+# silently no-ops and powersave stays on, which dropped a board off wifi within hours.
 # Resolve the real wifi connection name instead of assuming it.
 WIFI_CON=$(nmcli -t -f NAME,TYPE connection show | awk -F: '$2 ~ /wireless/ {print $1; exit}')
 [ -n "$WIFI_CON" ] && nmcli connection modify "$WIFI_CON" 802-11-wireless.powersave 2 connection.autoconnect yes || true
@@ -325,7 +325,7 @@ chown $U:$U $H/.bash_profile
 
 echo "--- verify critical stack before done-flag ---"
 # A half-configured board must NOT get the done-flag: first-boot hooks only fire once, so a
-# flagged-but-broken install would never retry. On failure: no flag, no reboot — SSH is already
+# flagged-but-broken install would never retry. On failure: no flag, no reboot. SSH is already
 # up, fix remotely and re-run this script by hand.
 VFAIL=0
 for bin in chromium-browser startx openbox-session xdotool unclutter; do
@@ -334,7 +334,7 @@ done
 for f in $H/kiosk.sh $H/screen_poll.sh $H/dashboard_output.sh $H/dashboard_display_watch.sh $H/force_display_mode.sh; do
   [ -x "$f" ] || { echo "VERIFY FAIL: $f missing or not executable"; VFAIL=1; }
 done
-[ "$VFAIL" = "1" ] && { echo "=== firstboot INCOMPLETE $(date) — no done-flag, no reboot; ssh in, fix, re-run ==="; exit 1; }
+[ "$VFAIL" = "1" ] && { echo "=== firstboot INCOMPLETE $(date): no done-flag, no reboot; ssh in, fix, re-run ==="; exit 1; }
 
 echo "--- done; flag + reboot into the kiosk ---"
 touch "$DONE"
