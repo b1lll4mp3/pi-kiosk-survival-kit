@@ -196,8 +196,11 @@ can see it, which is why my standing rule is that only human eyes close a glass 
   because a Pi has no RTC and a stale clock both fails repo signature checks and 404s the
   pool. `apt-get update` has to succeed or no done-flag gets written. Journald gets
   persistent-but-capped storage via an `/etc` drop-in, because Pi OS forces volatile with a
-  vendor drop-in and volatile journald destroyed the evidence in two separate freeze
-  investigations. WiFi powersave goes off by resolving the real NM connection name. And a
+  vendor drop-in and volatile journald has now destroyed the evidence in three separate
+  incidents on this fleet, the third on a board this kit had not provisioned. WiFi powersave
+  goes off in two places: the real NM connection name (resolved, because the guessed name
+  silently no-ops) and a global drop-in, so a connection profile created later by a reflash
+  or an SSID change doesn't start with powersave back on. And a
   verify gate runs before the done-flag lands, so a half-configured board retries instead
   of bricking politely. Read that gate narrowly though: it checks 5 binaries and 5 scripts,
   and `dashboard_watchdog.sh` is not one of them. A missing layer 3 only prints
@@ -265,6 +268,46 @@ diff before.txt after.txt           # ANY delta is stop-the-line
 - Log context on every action. The watchdog stamps SoC temperature and throttle flags on
   each event, because a hot, throttled SoC stretches JS execution and looks a lot like a
   wedge. The log can rule that in or out afterwards.
+
+## Rules for the UI itself, not just the box
+
+The four layers keep the board alive. These are what I learned about what the board draws,
+and each one cost me something.
+
+**Name the layer you actually observed to fail.** A panel of mine displayed "Home Assistant
+unreachable" for hours while Home Assistant was perfectly healthy: the Pi had fallen off
+WiFi. The banner was written from a `fetch` rejection, and a rejection tells you only that
+your own network died. It cannot tell you anything about the far end, because nothing
+reached the far end. Only an actual response, including an error response, proves you got
+there. So a rejection now reads "panel offline, check its network", and a non-2xx reads
+"the far end answered badly". Getting this backwards produces a confidently wrong diagnosis
+pointing at a healthy system, which is worse than no banner at all.
+
+**Loud elements need a staleness cutoff; quiet ones don't.** Keeping the last known state
+on screen is fine for a small status pill and unacceptable for anything animated. A hung
+backend that leaves a wall display strobing a motion alert forever trains everyone in the
+house to ignore it. Anything attention-grabbing gets a hard cutoff (mine is 60 s) after
+which it returns to neutral rather than holding its last value.
+
+**Animate opacity and nothing else.** On the 1 GB Pi 3B a flashing outline measured 24.4%
+CPU against a 20.9 to 25.2% idle baseline, which is inside the noise. That is only true
+because it animates opacity, which the compositor handles. Animate anything that triggers
+layout or paint and the weakest board in the fleet starts dropping frames on a page whose
+whole job is to be glanceable.
+
+**Ship a forcing flag with every conditional element.** Anything that only appears under a
+real-world condition is nearly untestable on the glass, so add a query flag that forces it
+on (`?ringtest=1` here). This is the closest thing I have to a fix for the dark-glass blind
+spot above: it can't tell you the panel is lit, but it lets a human standing in the room
+confirm a rare state renders correctly without waiting for the condition.
+
+**Test the served page, not a copy of it.** My harness fetches the live endpoint and
+executes its script under a stubbed clock, so identity with production is structural rather
+than assumed. Given how much of this kit is about copies drifting from originals, testing a
+local copy of a page would have been a joke.
+
+One honest caveat on all of the above: a passing headless harness proves the logic, never
+the pixels. Mine would pass with the element rendered invisible.
 
 ## Limitations
 

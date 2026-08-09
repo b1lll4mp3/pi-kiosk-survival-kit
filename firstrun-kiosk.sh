@@ -308,6 +308,15 @@ grep -q '/home/pi/.config/chromium' /etc/fstab || echo 'tmpfs /home/pi/.config/c
 # Resolve the real wifi connection name instead of assuming it.
 WIFI_CON=$(nmcli -t -f NAME,TYPE connection show | awk -F: '$2 ~ /wireless/ {print $1; exit}')
 [ -n "$WIFI_CON" ] && nmcli connection modify "$WIFI_CON" 802-11-wireless.powersave 2 connection.autoconnect yes || true
+# Belt and braces: a global default as well as the per-connection property. A later board
+# came back reachable only in bursts with the connection property already set, and only
+# settled once this drop-in was in place too. That board was not re-measured afterwards, so
+# treat this as cheap insurance rather than a proven necessity: a new connection profile
+# created later (a reflash, a different SSID) would otherwise start with powersave back on.
+mkdir -p /etc/NetworkManager/conf.d
+printf '[connection]
+wifi.powersave = 2
+' > /etc/NetworkManager/conf.d/wifi-powersave-off.conf
 
 echo "--- SoC hardware watchdog via systemd ---"
 sed -i 's/^#\?RuntimeWatchdogSec=.*/RuntimeWatchdogSec=14/' /etc/systemd/system.conf
