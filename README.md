@@ -1,7 +1,9 @@
 # pi-kiosk-survival-kit
 
 Four independent watchdog layers that keep my Raspberry Pi wall dashboards alive without
-me touching them. Each layer catches a failure class the layer below it is structurally
+me touching them, plus the fifth failure class that walked through all four and left a
+board dark for fourteen hours. Each layer catches a failure class the layer below it is
+structurally
 blind to. Plus byte-exact deploy verification and pull-based remote reboot control.
 
 ## The morning a Pi healed its own radio
@@ -268,6 +270,40 @@ diff before.txt after.txt           # ANY delta is stop-the-line
 - Log context on every action. The watchdog stamps SoC temperature and throttle flags on
   each event, because a hot, throttled SoC stretches JS execution and looks a lot like a
   wedge. The log can rule that in or out afterwards.
+
+## The fifth failure class, and why four layers were not enough
+
+On 2026-08-18 a board went dark at 07:08 and stayed dark about fourteen hours. Every layer
+in this kit did exactly what it was designed to do, and none of them could have helped.
+
+The board browns out chronically. NetworkManager rewrites its credential files in place, and
+a truncate-for-rewrite that loses power before the contents land leaves an empty file where
+the SSID and passphrase were. Both credential files sat at zero bytes, mtime stamped to the
+incident minute. The radio was fine. The access point was fine. The credentials were gone.
+
+Layer 3 correctly diagnosed a dead network, restarted NetworkManager, escalated to a reboot,
+and repeated roughly every twelve minutes all day. A reboot cannot reconstruct a credential.
+Layer 4 detected it inside forty minutes and had nothing to do, because that board has no
+smart plug, so it fell back to alerting into a notification channel that was itself dead.
+And the uptime monitor asserted the dashboard *page*, which is served by the backend and
+returned 200 all day long. Green throughout. That is the monitor-the-artifact mistake this
+kit warns about elsewhere, made by me, about this kit.
+
+The lesson is not that the layers are wrong. Each one still covers the class it was built
+for. The lesson is that a self-heal ladder can only restore state it can regenerate, and
+nothing in the ladder was watching stored state at all.
+
+So the kit now ships `wifi_profile_guard.sh`. It keeps a local backup of the network
+credential files and restores any that go missing *or go zero-byte*, then reloads. It covers
+both credential stores, because fleets are usually split between NetworkManager's own
+connection files and netplan yaml. The zero-byte case is the one that matters and the one a
+naive existence check misses.
+
+Two things worth stealing even if you never run the script. Watch the renderer's own
+heartbeat rather than the page that feeds it, because the page is served by a machine that
+is still healthy while your board is dark. And when a layer's remedy is "alert a human",
+verify the alert path actually reaches one, since three notifications went into a dead
+channel that day and nobody heard any of them.
 
 ## Rules for the UI itself, not just the box
 
